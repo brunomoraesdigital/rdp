@@ -757,9 +757,26 @@ function formatChecklist(cmd) { const el = document.getElementById('observacao-c
 function toggleHighlightChecklist() { const el = document.getElementById('observacao-checklist'); if(el) { el.focus(); if (isHighlightActive) { document.execCommand('removeFormat', false, null); isHighlightActive = false; } else { document.execCommand('styleWithCSS', false, true); document.execCommand('hiliteColor', false, 'yellow'); isHighlightActive = true; } checklistAlterado = true; } }
 function escapeHtml(str) { return str.replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
 
+/* ========== FUNÇÃO AUXILIAR PARA ENCONTRAR REGISTRO ANTERIOR COM MESMO PROCESSO ========== */
+function buscarRegistroAnteriorPorProcesso(processo) {
+    let registrosAnteriores = [];
+    for (let data in dados) {
+        if (data === diaAtual) continue; // ignora o dia atual
+        let registros = dados[data];
+        for (let i = 0; i < registros.length; i++) {
+            if (registros[i].processo === processo) {
+                registrosAnteriores.push({ data: data, registro: registros[i] });
+            }
+        }
+    }
+    if (registrosAnteriores.length === 0) return null;
+    // ordena pela data mais recente (maior string yyyy-mm-dd)
+    registrosAnteriores.sort((a, b) => b.data.localeCompare(a.data));
+    return registrosAnteriores[0].registro;
+}
+
 /* ---------- PESQUISA (modificada) ---------- */
 function abrirPesquisa() {
-    // Reset flags ao abrir a pesquisa
     nenhumResultadoPesquisa = false;
     ultimoTermoPesquisa = "";
     document.getElementById('modalPesquisaOverlay').style.display = 'flex';
@@ -769,13 +786,11 @@ function abrirPesquisa() {
 }
 
 function fecharPesquisa() {
-    // Se houve nenhum resultado e existe um termo armazenado, preenche o campo processo e seleciona o dia atual
     if (nenhumResultadoPesquisa && ultimoTermoPesquisa.trim() !== "") {
         document.getElementById('processo').value = ultimoTermoPesquisa;
         diaSelecionado = diaAtual;
         renderizar();
         mostrarStatus("Nenhum resultado encontrado. Campo processo preenchido com o termo da pesquisa e dia atual selecionado.");
-        // Reset flags
         nenhumResultadoPesquisa = false;
         ultimoTermoPesquisa = "";
     }
@@ -801,7 +816,6 @@ function executarPesquisa() {
     }
     
     if (resultados.length) {
-        // Encontrou resultados: desabilita o preenchimento automático
         nenhumResultadoPesquisa = false;
         ultimoTermoPesquisa = "";
         resultados.forEach(res => {
@@ -828,7 +842,6 @@ function executarPesquisa() {
         });
         listaResultados.style.display = 'block';
     } else {
-        // Nenhum resultado encontrado: ativa o preenchimento automático
         nenhumResultadoPesquisa = true;
         ultimoTermoPesquisa = termo;
         listaResultados.style.display = 'block';
@@ -855,21 +868,76 @@ async function carregarFraseClippy() {
     }
 }
 carregarFraseClippy();
+
+/* ========== FUNÇÃO ADICIONAR REGISTRO MODIFICADA ========== */
 function adicionarRegistro() {
     if (diaSelecionado !== diaAtual) return;
     var proc = document.getElementById('processo').value.trim();
     if (!proc) return;
     if (!dados[diaSelecionado]) dados[diaSelecionado] = [];
     var fluxo = document.querySelector('input[name=fluxo]:checked').value;
-    dados[diaSelecionado].push({ 
-        processo: proc, tipo: document.getElementById('tipo').value, fluxo: fluxo, 
-        concluido: false, nota: "", aviso: false, atualizacao: false, tempo: false, obras: false,
-        checklist: null
-    });
+    
+    // --- VERIFICAR SE O PROCESSO JÁ EXISTE EM DATA ANTERIOR ---
+    var registroAnterior = buscarRegistroAnteriorPorProcesso(proc);
+    var checklistCopiado = null;
+    var notaReferencia = "";
+    if (registroAnterior) {
+        // Espelhar o checklist (cópia profunda)
+        if (registroAnterior.checklist) {
+            checklistCopiado = JSON.parse(JSON.stringify(registroAnterior.checklist));
+            // Incrementar versão para indicar cópia? Não solicitado, mas manter a versão original
+            // Ajustar a data da cópia para o momento atual
+            if (checklistCopiado) {
+                checklistCopiado.data = new Date().toISOString();
+                // versão permanece a mesma do original, pois é um espelho
+            }
+        }
+        // Formatar data anterior no formato dd/mm/aaaa
+        var dataAnterior = null;
+        for (let d in dados) {
+            if (dados[d].indexOf(registroAnterior) !== -1) {
+                dataAnterior = d;
+                break;
+            }
+        }
+        if (dataAnterior) {
+            var partes = dataAnterior.split('-');
+            var dataFormatada = `${partes[2]}/${partes[1]}/${partes[0]}`;
+            notaReferencia = `<br><br>>> incluído anteriormente em ${dataFormatada}`;
+        } else {
+            notaReferencia = `<br><br>>> incluído anteriormente`;
+        }
+    }
+    
+    var novoRegistro = { 
+        processo: proc, 
+        tipo: document.getElementById('tipo').value, 
+        fluxo: fluxo, 
+        concluido: false, 
+        nota: "", 
+        aviso: false, 
+        atualizacao: false, 
+        tempo: false, 
+        obras: false,
+        checklist: checklistCopiado  // se encontrou anterior, copia; senão, null
+    };
+    
+    // Adicionar referência na nota (não substitui nada, pois nota está vazia. Se houvesse conteúdo, colocaria abaixo, mas não há)
+    if (notaReferencia) {
+        novoRegistro.nota = notaReferencia;
+    }
+    
+    dados[diaSelecionado].push(novoRegistro);
     document.getElementById('processo').value = '';
-    salvarNavegador(); renderizar();
-    mostrarStatus("Processo registrado.");
+    salvarNavegador(); 
+    renderizar();
+    if (registroAnterior) {
+        mostrarStatus("Processo registrado com checklist e referência copiados.");
+    } else {
+        mostrarStatus("Processo registrado.");
+    }
 }
+
 // Arrastável
 (function() {
     const modal = document.getElementById('modalChecklistOverlay');
